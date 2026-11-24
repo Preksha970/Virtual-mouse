@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AeroLock // AI Virtual Mouse & Gesture Security</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="cyber-scanline"></div>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon">⚡</div>
+        <div class="brand-text">
+          <h1>AEROLOCK <span class="version">v2.4</span></h1>
+          <p class="subtitle">AI Virtual Mouse & Biometric Gesture Security System</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <div class="status-indicator" id="system-status-indicator">
+          <span class="pulse-dot"></span>
+          <span id="system-status-text">SYSTEM ACTIVE</span>
+        </div>
+        <div class="fps-badge">
+          <span class="label">FPS</span>
+          <span class="value" id="fps-counter">30</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Grid -->
+    <main class="main-grid">
+      <!-- Left Column: Live HUD & Quick Actions -->
+      <section class="feed-column">
+        <div class="card feed-card">
+          <div class="card-header">
+            <h2>LIVE VISION HUD</h2>
+            <div class="hud-badges">
+              <span class="badge" id="hud-gesture-badge">GESTURE: NONE</span>
+              <span class="badge badge-accent" id="hud-action-badge">POINTER</span>
+            </div>
+          </div>
+          <div class="video-wrapper">
+            <img src="/video_feed" alt="Camera Feed" class="video-stream" id="video-feed-img">
+            <div class="video-overlay-banner" id="lock-overlay-banner" style="display: none;">
+              <div class="lock-glitch-icon">🔒</div>
+              <h3>LAPTOP SECURE LOCKED</h3>
+              <p id="unlock-instruction-text">Show Peace Sign (✌️) or Open Palm (🖐️) to Instant Unlock, or use Virtual Keyboard / Signs 1-9</p>
+            </div>
+          </div>
+          <div class="card-footer feed-controls">
+            <button class="btn btn-primary" id="btn-toggle-mouse">
+              <span class="icon">🖱️</span> <span id="toggle-mouse-text">Disable Virtual Mouse</span>
+            </button>
+            <button class="btn btn-danger" id="btn-lock-now">
+              <span class="icon">🔒</span> Lock Laptop Now
+            </button>
+            <button class="btn btn-warning" id="btn-unlock-now">
+              <span class="icon">🔓</span> Unlock Screen
+            </button>
+          </div>
+        </div>
+
+        <!-- Telemetry Card -->
+        <div class="card telemetry-card">
+          <div class="card-header">
+            <h3>REAL-TIME TELEMETRY</h3>
+          </div>
+          <div class="telemetry-grid">
+            <div class="telemetry-item">
+              <span class="label">Current Action</span>
+              <span class="data text-cyan" id="telem-action">POINTER</span>
+            </div>
+            <div class="telemetry-item">
+              <span class="label">Detected Gesture</span>
+              <span class="data text-green" id="telem-gesture">Pointing_Up</span>
+            </div>
+            <div class="telemetry-item">
+              <span class="label">Lock Hold Progress</span>
+              <div class="progress-bar-container">
+                <div class="progress-bar-fill" id="telem-lock-prog" style="width: 0%;"></div>
+              </div>
+            </div>
+            <div class="telemetry-item">
+              <span class="label">Unlock Passcode Buffer</span>
+              <span class="data text-cyan" id="telem-pin">[ _ ] [ _ ] [ _ ] [ _ ]</span>
+            </div>
+            <div class="telemetry-item">
+              <span class="label">Detected Numeric Sign (1-9)</span>
+              <span class="data text-green" id="telem-digit-sign">None</span>
+            </div>
+            <div class="telemetry-item">
+              <span class="label">Virtual Keyboard Hover</span>
+              <span class="data text-purple" id="telem-key-hover">None</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Settings & Gesture Guide -->
+      <section class="controls-column">
+        <!-- Settings Panel -->
+        <div class="card settings-card">
+          <div class="card-header">
+            <h2>SYSTEM CONFIGURATION</h2>
+            <button class="btn btn-secondary btn-sm" id="btn-save-settings">Save Changes</button>
+          </div>
+
+          <div class="tabs">
+            <button class="tab-btn active" data-tab="tab-mouse">Virtual Mouse</button>
+            <button class="tab-btn" data-tab="tab-security">Lock & Unlock</button>
+          </div>
+
+          <!-- Tab: Virtual Mouse -->
+          <div class="tab-content active" id="tab-mouse">
+            <div class="control-group">
+              <label for="select-camera">Camera Source Device</label>
+              <select id="select-camera">
+                <option value="1" selected>Camera #1 (Laptop RGB Webcam)</option>
+                <option value="0">Camera #0 (Integrated / IR)</option>
+                <option value="2">Camera #2 (External / Virtual)</option>
+              </select>
+              <small>Auto-detects working RGB webcam. Switch here if you have multiple cameras.</small>
+            </div>
+
+            <div class="control-group">
+              <label for="slider-speed">Cursor Speed: <span class="val" id="val-speed">1.25x</span></label>
+              <input type="range" id="slider-speed" min="0.5" max="2.5" step="0.05" value="1.25">
+              <small>Controls cursor velocity across the display.</small>
+            </div>
+
+            <div class="control-group">
+              <label for="slider-smoothing">Jitter Smoothing: <span class="val" id="val-smoothing">0.65</span></label>
+              <input type="range" id="slider-smoothing" min="0.1" max="0.95" step="0.05" value="0.65">
+              <small>Higher values eliminate hand tremor; lower values give snappier response.</small>
+            </div>
+
+            <div class="control-group">
+              <label for="slider-pinch">Click Pinch Sensitivity: <span class="val" id="val-pinch">0.048</span></label>
+              <input type="range" id="slider-pinch" min="0.02" max="0.09" step="0.002" value="0.048">
+              <small>Threshold distance between thumb and index to trigger left click.</small>
+            </div>
+
+            <div class="control-group">
+              <label for="slider-scroll">Scroll Sensitivity: <span class="val" id="val-scroll">25</span></label>
+              <input type="range" id="slider-scroll" min="10" max="60" step="5" value="25">
+              <small>Step multiplier when scrolling with two fingers.</small>
+            </div>
+
+            <div class="control-group">
+              <label for="slider-margin">Active Boundary Margin: <span class="val" id="val-margin">15%</span></label>
+              <input type="range" id="slider-margin" min="0.05" max="0.30" step="0.01" value="0.15">
+              <small>Active tracking inner box so you don't have to reach camera edges.</small>
+            </div>
+          </div>
+
+          <!-- Tab: Lock & Unlock Security -->
+          <div class="tab-content" id="tab-security">
+            <div class="control-group">
+              <label for="select-lock-type">Lock Guard Type</label>
+              <select id="select-lock-type">
+                <option value="both">Both (AeroShield Hologram + Windows OS Lock)</option>
+                <option value="shield_only">AeroShield Hologram Guard Only</option>
+                <option value="windows_only">Native Windows OS Lock Only</option>
+              </select>
+              <small>AeroShield allows instant live gesture unlocking; Windows OS triggers Win+L.</small>
+            </div>
+
+            <div class="control-group">
+              <label for="slider-lock-hold">Lock Hold Duration: <span class="val" id="val-lock-hold">1.5s</span></label>
+              <input type="range" id="slider-lock-hold" min="0.8" max="3.0" step="0.1" value="1.5">
+              <small>How long you must hold the Closed Fist gesture before locking.</small>
+            </div>
+
+            <div class="control-group">
+              <label>Unlock Gesture Sequence</label>
+              <div class="multi-select-row">
+                <div class="step-select">
+                  <span>Step 1:</span>
+                  <select id="select-unlock-step1">
+                    <option value="Victory" selected>✌️ Peace / Victory</option>
+                    <option value="Thumb_Up">👍 Thumbs Up</option>
+                    <option value="Open_Palm">🖐️ Open Palm</option>
+                  </select>
+                </div>
+                <div class="step-select">
+                  <span>Step 2:</span>
+                  <select id="select-unlock-step2">
+                    <option value="Thumb_Up" selected>👍 Thumbs Up</option>
+                    <option value="Victory">✌️ Peace / Victory</option>
+                    <option value="Open_Palm">🖐️ Open Palm</option>
+                  </select>
+                </div>
+              </div>
+              <small>Sequence of gestures required to disarm the lock screen.</small>
+            </div>
+
+            <div class="control-group">
+              <label for="input-pin">Air-PIN / Passcode Backup</label>
+              <input type="password" id="input-pin" maxlength="6" value="1234">
+              <small>4 to 6 digit emergency PIN code for on-screen Air Keypad.</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- Gesture Visual Cheat Sheet -->
+        <div class="card guide-card">
+          <div class="card-header">
+            <h3>GESTURE QUICK GUIDE</h3>
+          </div>
+          <div class="gesture-grid">
+            <div class="gesture-item">
+              <div class="gesture-icon">☝️</div>
+              <div class="gesture-info">
+                <h4>Move Cursor</h4>
+                <p>Extend index finger and move within the cyber bounding box.</p>
+              </div>
+            </div>
+            <div class="gesture-item">
+              <div class="gesture-icon">🤏</div>
+              <div class="gesture-info">
+                <h4>Left Click</h4>
+                <p>Pinch index finger and thumb together briefly.</p>
+              </div>
+            </div>
+            <div class="gesture-item">
+              <div class="gesture-icon">✊</div>
+              <div class="gesture-info">
+                <h4>Lock Laptop</h4>
+                <p>Make a closed fist and hold for 1.5s until lock bar fills 100%.</p>
+              </div>
+            </div>
+            <div class="gesture-item">
+              <div class="gesture-icon">✌️</div>
+              <div class="gesture-info">
+                <h4>Scroll & Step 1 Unlock</h4>
+                <p>Extend index + middle fingers together to scroll or start unlock.</p>
+              </div>
+            </div>
+            <div class="gesture-item">
+              <div class="gesture-icon">👍</div>
+              <div class="gesture-info">
+                <h4>Step 2 Unlock</h4>
+                <p>Give thumbs-up gesture to complete unlock verification.</p>
+              </div>
+            </div>
+            <div class="gesture-item">
+              <div class="gesture-icon">🖐️</div>
+              <div class="gesture-info">
+                <h4>Pause / Idle</h4>
+                <p>Open full palm to freeze cursor while typing on physical keyboard.</p>
+              </div>
+            </div>
+            <!-- Numeric Signs 1-9 & Virtual Keyboard -->
+            <div class="gesture-item" style="grid-column: 1 / -1; background: rgba(56, 189, 248, 0.08); border-color: rgba(56, 189, 248, 0.25);">
+              <div class="gesture-icon">⌨️</div>
+              <div class="gesture-info">
+                <h4>Virtual Keyboard & Numeric Signs (1 to 9)</h4>
+                <p>When locked, enter your 4-6 digit passcode by either hovering your index finger over keys 1-9 on the HUD or showing numeric finger signs (1=Index, 2=V/Peace, 3=Three fingers, 4=Four fingers, 5=Palm, 6=Shaka, 8=Gun, 9=OK Sign).</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
