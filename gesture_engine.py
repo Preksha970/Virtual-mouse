@@ -288,8 +288,8 @@ class GestureEngine:
         middle_thumb_dist = self.dist(thumb_tip, middle_tip)
         index_middle_dist = self.dist(index_tip, middle_tip)
 
-        # Mirrored X coordinate (1.0 - x)
-        pointer_x = 1.0 - index_tip.x
+        # Pointer coordinates (frame is already flipped with cv2.flip)
+        pointer_x = index_tip.x
         pointer_y = index_tip.y
         data["pointer_x"] = pointer_x
         data["pointer_y"] = pointer_y
@@ -376,12 +376,12 @@ class GestureEngine:
                     data["action"] = "LEFT CLICK"
                 self._reset_pinch()
             else:
-                if index_up:
+                if index_up or data.get("gesture") == "Pointing_Up":
                     data["action"] = "POINTER"
-                elif data["gesture"] == "Open_Palm":
+                elif data.get("gesture") == "Open_Palm":
                     data["action"] = "IDLE (PALM)"
                 else:
-                    data["action"] = "TRACKING"
+                    data["action"] = "POINTER"
 
         return data
 

@@ -26,6 +26,9 @@ class MouseController:
     def __init__(self, config=None):
         self.user32 = ctypes.windll.user32
         
+        # Attach to the active interactive user desktop session
+        self._attach_desktop()
+        
         # Enable DPI awareness so coordinate mapping matches physical monitor resolution
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(2) # Per-monitor DPI aware
@@ -45,12 +48,25 @@ class MouseController:
         self.margin_y = self.config.get("active_margin_y", 0.15)
         self.scroll_sensitivity = self.config.get("scroll_sensitivity", 25)
         
-        self.current_x = self.screen_width / 2
-        self.current_y = self.screen_height / 2
+        curr_x, curr_y = self.get_cursor_pos()
+        self.current_x = float(curr_x) if curr_x > 0 else (self.screen_width / 2)
+        self.current_y = float(curr_y) if curr_y > 0 else (self.screen_height / 2)
         
         self.is_dragging = False
         self.last_click_time = 0
         self.enabled = True
+
+    def _attach_desktop(self):
+        """Attaches calling thread to the interactive user desktop session."""
+        try:
+            hwinsta = self.user32.OpenWindowStationW("winsta0", False, 0x02000000 | 0x037F)
+            if hwinsta:
+                self.user32.SetProcessWindowStation(hwinsta)
+            hdesk = self.user32.OpenDesktopW("default", 0, False, 0x02000000 | 0x01FF)
+            if hdesk:
+                self.user32.SetThreadDesktop(hdesk)
+        except Exception:
+            pass
         
     def get_screen_size(self):
         return self.screen_width, self.screen_height
@@ -107,7 +123,13 @@ class MouseController:
         screen_x = max(0, min(self.screen_width - 1, screen_x))
         screen_y = max(0, min(self.screen_height - 1, screen_y))
         
-        self.user32.SetCursorPos(screen_x, screen_y)
+        res = self.user32.SetCursorPos(screen_x, screen_y)
+        if not res:
+            self._attach_desktop()
+            if not self.user32.SetCursorPos(screen_x, screen_y):
+                norm_x = int(screen_x * 65535 / max(1, self.screen_width - 1))
+                norm_y = int(screen_y * 65535 / max(1, self.screen_height - 1))
+                self.user32.mouse_event(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, norm_x, norm_y, 0, 0)
         return screen_x, screen_y
 
     def left_down(self):

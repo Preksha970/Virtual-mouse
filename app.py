@@ -263,7 +263,7 @@ def main():
                 action = data["action"]
                 
                 # Move cursor
-                if action in ("POINTER", "DRAGGING", "PINCHING"):
+                if data.get("hand_detected") and action not in ("SCROLLING", "IDLE (PALM)", "RIGHT CLICK") and not action.startswith("LOCKING"):
                     mouse.update_position(data["pointer_x"], data["pointer_y"])
 
                 # Click events
