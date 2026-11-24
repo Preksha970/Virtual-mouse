@@ -2,15 +2,20 @@
 Tkinter Smart Popup & Notification Manager
 ==========================================
 Thread-safe, non-blocking modern Tkinter popup system for Virtual Mouse.
-Features:
-- Runs in a background thread to prevent freezing OpenCV webcam feed or cursor movement.
-- Thread-safe queue communication.
-- Modern dark-themed card styling with clean typography and accent bars.
+
+Key Features:
+- Runs in a dedicated background daemon thread to prevent freezing the OpenCV
+  webcam feed or causing mouse cursor stutter.
+- Thread-safe queue communication (`queue.Queue`).
+- Modern dark-themed card styling (Catppuccin Mocha palette) with accent indicators.
+- Draggable frameless cards for seamless desktop ergonomics.
+- Explicit "Close" button and top-right "✕" button on all popups.
 - Singleton window design: NEVER spawns duplicate windows; smoothly updates in-place.
-- Auto-dismisses absence notifications as soon as the user returns.
-- Actionable buttons (Close, Lock Screen Now).
-- Welcome back toast notification with auto-dismiss timer.
-- Camera disconnect alert handling.
+- Auto-dismisses absence notifications as soon as the user's face is re-detected.
+- Actionable buttons (Close, "🔒 Lock Screen Now" for 3-minute extended absence).
+- Welcome back toast notification with auto-dismiss timer (3 seconds).
+- Camera disconnect alert handling with cooldown protection against repeated popups.
+- Zero frame or image storage: strictly UI rendering.
 """
 
 import threading
@@ -25,6 +30,7 @@ from tkinter import ttk
 class PopupManager:
     """
     Manages display, update, and dismissal of modern Tkinter notification popups.
+    Thread-safe API designed for real-time OpenCV loops.
     """
 
     def __init__(self):
@@ -40,6 +46,7 @@ class PopupManager:
         # Cooldown & state tracking
         self.last_shown_stage = None
         self.last_dismissed_time = 0.0
+        self.last_camera_error_time = 0.0
 
         # Start Tkinter daemon thread
         self.thread = threading.Thread(target=self._run_tk_thread, daemon=True)
@@ -51,7 +58,12 @@ class PopupManager:
     # --------------------------------------------------------------------------
 
     def show_absence_popup(self, stage: int, message: str, show_lock_option: bool = False):
-        """Displays or updates the absence popup for the given stage."""
+        """Displays or updates the absence popup for the given stage with cooldown protection."""
+        # Cooldown: if user explicitly closed the popup within the last 3 seconds, avoid immediate re-spawn
+        now = time.time()
+        if now - self.last_dismissed_time < 3.0:
+            return
+
         self.cmd_queue.put({
             "action": "show_away",
             "stage": stage,
@@ -71,8 +83,13 @@ class PopupManager:
             "duration": duration
         })
 
-    def show_camera_error(self, message: str = "Webcam feed disconnected or unavailable!"):
-        """Displays an alert notifying that the camera has disconnected."""
+    def show_camera_error(self, message: str = "Webcam feed disconnected or unavailable!", cooldown_sec: float = 10.0):
+        """Displays an alert notifying that the camera has disconnected with anti-spam cooldown."""
+        now = time.time()
+        if now - self.last_camera_error_time < cooldown_sec:
+            return
+        self.last_camera_error_time = now
+
         self.cmd_queue.put({
             "action": "show_camera_error",
             "message": message
@@ -93,7 +110,7 @@ class PopupManager:
         self.tk_ready.set()
 
         # Start checking incoming queue
-        self.root.after(50, self._process_queue)
+        self.root.after(40, self._process_queue)
         try:
             self.root.mainloop()
         except Exception:
@@ -121,7 +138,7 @@ class PopupManager:
             pass
 
         if self.root:
-            self.root.after(50, self._process_queue)
+            self.root.after(40, self._process_queue)
 
     # --------------------------------------------------------------------------
     # Popup UI Implementation
@@ -132,14 +149,14 @@ class PopupManager:
         message = cmd.get("message", "")
         show_lock = cmd.get("show_lock", False)
 
-        # Stage titles & icons
-        stage_icons = {
+        # Stage titles & accent themes
+        stage_themes = {
             10: ("👀", "Hey! Still There?", "#6366f1"),      # Indigo
             30: ("☕", "Taking a Break?", "#8b5cf6"),        # Purple
             60: ("⏳", "Virtual Mouse Waiting", "#ec4899"),   # Pink
             180: ("🔒", "Extended Absence Alert", "#ef4444") # Red
         }
-        icon, title, accent_color = stage_icons.get(stage, ("🔔", "User Presence Alert", "#6366f1"))
+        icon, title, accent_color = stage_themes.get(stage, ("🔔", "User Presence Alert", "#6366f1"))
 
         # If absence window already exists, update in-place to avoid duplicate windows
         if self.absence_window and tk.Toplevel.winfo_exists(self.absence_window):
@@ -154,10 +171,10 @@ class PopupManager:
         win.configure(bg="#181825")
         win.resizable(False, False)
 
-        # Remove system window borders for modern card look
+        # Frameless modern card styling
         win.overrideredirect(True)
 
-        # Frame structure
+        # Outer card frame with accent border
         card = tk.Frame(win, bg="#1e1e2e", bd=1, relief="solid", highlightthickness=1, highlightbackground=accent_color)
         card.pack(fill="both", expand=True)
 
@@ -168,7 +185,7 @@ class PopupManager:
         content_box = tk.Frame(card, bg="#1e1e2e", padx=20, pady=16)
         content_box.pack(fill="both", expand=True)
 
-        # Header Row (Icon + Title)
+        # Header Row (Icon + Title + Top-Right Close '✕' Button)
         header_frame = tk.Frame(content_box, bg="#1e1e2e")
         header_frame.pack(fill="x", pady=(0, 10))
 
@@ -177,6 +194,12 @@ class PopupManager:
 
         lbl_title = tk.Label(header_frame, text=title, font=("Segoe UI", 13, "bold"), bg="#1e1e2e", fg="#ffffff")
         lbl_title.pack(side="left", anchor="w")
+
+        btn_x = tk.Button(header_frame, text="✕", font=("Segoe UI", 10, "bold"),
+                          bg="#1e1e2e", fg="#6c7086", activebackground="#1e1e2e", activeforeground="#ffffff",
+                          bd=0, relief="flat", cursor="hand2",
+                          command=self._handle_dismiss_away)
+        btn_x.pack(side="right")
 
         # Message label
         lbl_msg = tk.Label(content_box, text=message, font=("Segoe UI", 10), bg="#1e1e2e", fg="#cdd6f4",
@@ -187,7 +210,7 @@ class PopupManager:
         btn_frame = tk.Frame(content_box, bg="#1e1e2e")
         btn_frame.pack(fill="x", side="bottom")
 
-        # Optional Lock Screen button (Stage 4)
+        # Optional Lock Screen button (Stage 4: 180s)
         if show_lock:
             btn_lock = tk.Button(btn_frame, text="🔒 Lock Screen Now", font=("Segoe UI", 9, "bold"),
                                  bg="#ef4444", fg="#ffffff", activebackground="#dc2626", activeforeground="#ffffff",
@@ -195,14 +218,19 @@ class PopupManager:
                                  command=self._action_lock_screen)
             btn_lock.pack(side="left", padx=(0, 10))
 
-        btn_close = tk.Button(btn_frame, text="Dismiss", font=("Segoe UI", 9),
+        # Standard Close button
+        btn_close = tk.Button(btn_frame, text="Close", font=("Segoe UI", 9, "bold"),
                               bg="#313244", fg="#cdd6f4", activebackground="#45475a", activeforeground="#ffffff",
-                              relief="flat", padx=12, pady=6, cursor="hand2",
+                              relief="flat", padx=16, pady=6, cursor="hand2",
                               command=self._handle_dismiss_away)
         btn_close.pack(side="right")
 
+        # Enable dragging window
+        self._make_draggable(card, win)
+        self._make_draggable(header_frame, win)
+
         # Center window on screen
-        self._center_window(win, width=380, height=160 if show_lock else 145)
+        self._center_window(win, width=390, height=165 if show_lock else 145)
 
         # Store references for in-place updates
         win._lbl_icon = lbl_icon
@@ -216,13 +244,14 @@ class PopupManager:
         """Updates text and buttons on an already open window without duplicating it."""
         try:
             win = self.absence_window
-            win._lbl_icon.config(text={"10": "👀", "30": "☕", "60": "⏳", "180": "🔒"}.get(str(stage), "🔔"))
+            stage_icons = {"10": "👀", "30": "☕", "60": "⏳", "180": "🔒"}
+            win._lbl_icon.config(text=stage_icons.get(str(stage), "🔔"))
             win._lbl_title.config(text=title)
             win._lbl_msg.config(text=message)
             win._accent_strip.config(bg=accent_color)
             win._card.config(highlightbackground=accent_color)
 
-            # Check if lock button should be added
+            # Check if lock button should be added (for 180s stage)
             if show_lock and not getattr(win, '_has_lock_btn', False):
                 btn_lock = tk.Button(win._btn_frame, text="🔒 Lock Screen Now", font=("Segoe UI", 9, "bold"),
                                      bg="#ef4444", fg="#ffffff", activebackground="#dc2626", activeforeground="#ffffff",
@@ -230,12 +259,13 @@ class PopupManager:
                                      command=self._action_lock_screen)
                 btn_lock.pack(side="left", padx=(0, 10))
                 win._has_lock_btn = True
-                self._center_window(win, width=380, height=160)
+                self._center_window(win, width=390, height=165)
         except Exception:
             pass
 
     def _handle_dismiss_away(self):
-        """Closes active absence window."""
+        """Closes active absence window and records dismissal time for cooldown."""
+        self.last_dismissed_time = time.time()
         if self.absence_window and tk.Toplevel.winfo_exists(self.absence_window):
             try:
                 self.absence_window.destroy()
@@ -245,13 +275,13 @@ class PopupManager:
 
     def _handle_show_welcome(self, cmd):
         """Displays an attractive welcome back toast that automatically dismisses."""
-        # First dismiss any lingering away popup
+        # Immediately dismiss any lingering away popup
         self._handle_dismiss_away()
 
         message = cmd.get("message", "Welcome back! Your virtual mouse is ready!")
         duration_ms = int(cmd.get("duration", 3.0) * 1000)
 
-        # Close existing welcome if open
+        # Close existing welcome window if open
         if self.welcome_window and tk.Toplevel.winfo_exists(self.welcome_window):
             try:
                 self.welcome_window.destroy()
@@ -269,7 +299,7 @@ class PopupManager:
         card = tk.Frame(win, bg="#1e1e2e", bd=1, relief="solid", highlightthickness=1, highlightbackground="#a6e3a1")
         card.pack(fill="both", expand=True)
 
-        accent = tk.Frame(card, bg="#a6e3a1", height=4)  # Emerald green
+        accent = tk.Frame(card, bg="#a6e3a1", height=4)  # Emerald green accent
         accent.pack(fill="x", side="top")
 
         content = tk.Frame(card, bg="#1e1e2e", padx=18, pady=12)
@@ -290,14 +320,23 @@ class PopupManager:
         lbl_msg = tk.Label(text_frame, text=message, font=("Segoe UI", 9), bg="#1e1e2e", fg="#cdd6f4")
         lbl_msg.pack(anchor="w")
 
-        # Center near top of screen
-        self._center_window(win, width=380, height=80, y_offset=80)
+        # Top-right quick close button
+        btn_x = tk.Button(row, text="✕", font=("Segoe UI", 9, "bold"),
+                          bg="#1e1e2e", fg="#6c7086", activebackground="#1e1e2e", activeforeground="#ffffff",
+                          bd=0, relief="flat", cursor="hand2",
+                          command=lambda: self._safe_destroy(win))
+        btn_x.pack(side="right", padx=(8, 0))
+
+        self._make_draggable(card, win)
+
+        # Center near top of screen for notification toast feel
+        self._center_window(win, width=390, height=80, y_offset=80)
 
         # Auto-dismiss after duration
         self.root.after(duration_ms, lambda: self._safe_destroy(win))
 
     def _handle_show_camera_error(self, cmd):
-        """Displays webcam disconnect alert."""
+        """Displays webcam disconnect alert with Close button."""
         message = cmd.get("message", "Webcam feed was disconnected or is unavailable!")
 
         if self.camera_error_window and tk.Toplevel.winfo_exists(self.camera_error_window):
@@ -335,16 +374,17 @@ class PopupManager:
         lbl_msg = tk.Label(text_frame, text=message, font=("Segoe UI", 9), bg="#1e1e2e", fg="#cdd6f4", wraplength=280)
         lbl_msg.pack(anchor="w")
 
-        btn_close = tk.Button(content, text="Close Alert", font=("Segoe UI", 9),
+        btn_close = tk.Button(content, text="Close", font=("Segoe UI", 9, "bold"),
                               bg="#313244", fg="#cdd6f4", activebackground="#45475a", activeforeground="#ffffff",
-                              relief="flat", padx=12, pady=5, cursor="hand2",
+                              relief="flat", padx=14, pady=5, cursor="hand2",
                               command=lambda: self._safe_destroy(win))
         btn_close.pack(side="right")
 
-        self._center_window(win, width=380, height=120)
+        self._make_draggable(card, win)
+        self._center_window(win, width=390, height=125)
 
     # --------------------------------------------------------------------------
-    # Utility & Screen Actions
+    # Utility & Desktop Actions
     # --------------------------------------------------------------------------
 
     def _action_lock_screen(self):
@@ -359,8 +399,24 @@ class PopupManager:
             except Exception:
                 pass
 
-    def _center_window(self, win, width=380, height=150, y_offset=None):
-        """Centers the popup window horizontally on the user's primary monitor."""
+    def _make_draggable(self, widget, win):
+        """Allows user to drag frameless window across monitors."""
+        def start_move(event):
+            win._drag_x = event.x
+            win._drag_y = event.y
+
+        def do_move(event):
+            deltax = event.x - win._drag_x
+            deltay = event.y - win._drag_y
+            x = win.winfo_x() + deltax
+            y = win.winfo_y() + deltay
+            win.geometry(f"+{x}+{y}")
+
+        widget.bind("<ButtonPress-1>", start_move)
+        widget.bind("<B1-Motion>", do_move)
+
+    def _center_window(self, win, width=390, height=150, y_offset=None):
+        """Centers the popup window horizontally on the primary monitor."""
         win.update_idletasks()
         screen_w = win.winfo_screenwidth()
         screen_h = win.winfo_screenheight()
@@ -377,7 +433,7 @@ class PopupManager:
             pass
 
     def _handle_quit(self):
-        """Closes all popups and stops the mainloop."""
+        """Closes all popups and stops the mainloop cleanly."""
         self._handle_dismiss_away()
         if self.welcome_window:
             self._safe_destroy(self.welcome_window)

@@ -3,22 +3,24 @@ Virtual Mouse Using Hand Gestures with Smart User Presence Detection
 ====================================================================
 Complete integrated application combining:
 1. Virtual Mouse Hand Gesture Tracking:
-   - Cursor movement (Index finger pointing with smoothing)
-   - Left click (Index-Thumb pinch)
-   - Right click (Middle-Thumb pinch)
-   - Vertical Scrolling (Two-finger gesture)
-   - Screen Brightness Control (Thumb-Pinky spread gesture)
-   - Biometric / Fist Screen Lock (Windows LockWorkStation)
+   - Cursor movement (Index finger pointing with exponential smoothing)
+   - Left click (Index-Thumb pinch < 38px)
+   - Right click (Middle-Thumb pinch < 38px)
+   - Vertical Scrolling (Two-finger gesture: Index + Middle)
+   - Screen Brightness Control (Thumb-Pinky spread gesture: 10% - 100%)
+   - Biometric / Closed Fist Screen Lock (Hold closed fist 1.8s for Windows LockWorkStation)
 2. Smart User Presence Detection & Message Pop-up System:
-   - 10s:  "Hey, are you still there? We can't see you!"
-   - 30s:  "Where did you go? Take your time!"
-   - 1m:   "Still away? Your virtual mouse is waiting for you!"
-   - 3m:   "You've been away for a while. Would you like to lock your screen?" (Actionable button)
+   - 10 seconds: "Hey, are you still there? We can't see you!"
+   - 30 seconds: "Where did you go? Take your time!"
+   - 1 minute:   "Still away? Your virtual mouse is waiting for you!"
+   - 3 minutes:  "You've been away for a while. Would you like to lock your screen?" (Actionable button)
    - Welcome Back toast: "Welcome back! Your virtual mouse is ready!"
    - Automatic dismissal of absence popup on return
-   - Camera disconnect notification
+   - Non-blocking async face detection & thread-safe Tkinter popup system (zero webcam freezing)
+   - Camera disconnect notification with cooldown
    - Anti-flicker debounce filter
-   - Non-blocking threaded Tkinter interface
+   - Resumes normal hand gesture tracking immediately upon return
+   - Strictly in-memory: ZERO webcam frames or recordings stored on disk.
 """
 
 import os
@@ -118,7 +120,7 @@ class SystemController:
                 pass
 
     def set_brightness(self, level_percent: int):
-        """Sets screen brightness (0-100%). Throttled to prevent lag."""
+        """Sets screen brightness (10-100%). Throttled to prevent lag."""
         now = time.time()
         if now - self.last_brightness_time < 0.2:
             return
@@ -146,6 +148,7 @@ class SystemController:
 class HandGestureTracker:
     """
     Detects hand landmarks and translates gestures into virtual mouse commands.
+    Supports MediaPipe Hands with robust OpenCV contour fallback.
     """
 
     def __init__(self, screen_w, screen_h):
@@ -171,7 +174,7 @@ class HandGestureTracker:
             self.backend = "mediapipe"
         else:
             self.hands = None
-            self.backend = "fallback"
+            self.backend = "opencv_contour"
 
     def process_frame(self, frame_bgr, system_ctrl: SystemController):
         """
@@ -182,6 +185,9 @@ class HandGestureTracker:
         status = "SEARCHING"
         hand_detected = False
 
+        # ----------------------------------------------------------------------
+        # Backend 1: MediaPipe Hands (Full 21 Landmark Recognition)
+        # ----------------------------------------------------------------------
         if self.backend == "mediapipe" and self.hands:
             rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
             results = self.hands.process(rgb)
@@ -214,7 +220,7 @@ class HandGestureTracker:
 
                 now = time.time()
 
-                # GESTURE 1: FIST (Lock Screen)
+                # GESTURE 1: FIST (Biometric Screen Lock)
                 if not index_up and not middle_up and not ring_up and not pinky_up:
                     if self.fist_start_time is None:
                         self.fist_start_time = now
@@ -233,7 +239,6 @@ class HandGestureTracker:
                 if index_up and middle_up and not ring_up:
                     status = "SCROLL MODE"
                     if now - self.last_scroll_time > 0.15:
-                        # Map vertical position to scroll direction
                         if middle_tip[1] < h * 0.35:
                             system_ctrl.scroll(2)  # Scroll Up
                             status = "SCROLL UP"
@@ -245,7 +250,6 @@ class HandGestureTracker:
 
                 # GESTURE 3: BRIGHTNESS CONTROL (Thumb + Pinky spread wide, other fingers down)
                 if pinky_up and not index_up and not middle_up:
-                    # Map distance 40px - 220px to 10% - 100% brightness
                     pct = int(np.interp(dist_thumb_pinky, [40, 220], [10, 100]))
                     status = f"BRIGHTNESS: {pct}%"
                     system_ctrl.set_brightness(pct)
@@ -253,7 +257,6 @@ class HandGestureTracker:
 
                 # GESTURE 4: CURSOR MOVEMENT & CLICKS
                 if index_up:
-                    # Frame padding margin to reach screen edges easily
                     pad_x, pad_y = int(w * 0.18), int(h * 0.18)
                     mapped_x = np.interp(index_tip[0], [pad_x, w - pad_x], [0, self.screen_w])
                     mapped_y = np.interp(index_tip[1], [pad_y, h - pad_y], [0, self.screen_h])
@@ -278,6 +281,35 @@ class HandGestureTracker:
                         self.last_right_click_time = now
                         status = "RIGHT CLICK"
 
+            return status, hand_detected
+
+        # ----------------------------------------------------------------------
+        # Backend 2: OpenCV Contour / Fingertip Fallback
+        # ----------------------------------------------------------------------
+        try:
+            ycrcb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2YCrCb)
+            mask = cv2.inRange(ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127]))
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                valid_cnts = [c for c in contours if cv2.contourArea(c) > 3500]
+                if valid_cnts:
+                    hand_cnt = max(valid_cnts, key=cv2.contourArea)
+                    hand_detected = True
+                    cv2.drawContours(frame_bgr, [hand_cnt], -1, (255, 200, 0), 2)
+                    topmost = tuple(hand_cnt[hand_cnt[:, :, 1].argmin()][0])
+                    cv2.circle(frame_bgr, topmost, 8, (0, 0, 255), -1)
+
+                    pad_x, pad_y = int(w * 0.15), int(h * 0.15)
+                    mapped_x = np.interp(topmost[0], [pad_x, w - pad_x], [0, self.screen_w])
+                    mapped_y = np.interp(topmost[1], [pad_y, h - pad_y], [0, self.screen_h])
+                    curr_x = self.prev_x + (mapped_x - self.prev_x) * self.smooth_factor
+                    curr_y = self.prev_y + (mapped_y - self.prev_y) * self.smooth_factor
+                    self.prev_x, self.prev_y = curr_x, curr_y
+                    system_ctrl.move_cursor(curr_x, curr_y)
+                    status = "CURSOR MOVE (CV)"
+        except Exception:
+            pass
+
         return status, hand_detected
 
 
@@ -296,8 +328,8 @@ class VirtualMouseApp:
         self.system_ctrl = SystemController()
         self.hand_tracker = HandGestureTracker(self.system_ctrl.screen_w, self.system_ctrl.screen_h)
 
-        # Smart Presence Detection & Tkinter Pop-up System
-        self.presence_detector = PresenceDetector(debounce_sec=1.5)
+        # Smart Presence Detection (async_mode=True ensures zero webcam lag)
+        self.presence_detector = PresenceDetector(debounce_sec=1.5, cooldown_sec=5.0, async_mode=True)
         self.popup_manager = PopupManager()
 
         self.cap = None
@@ -322,16 +354,25 @@ class VirtualMouseApp:
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         self.is_running = True
 
-        print("[INFO] Virtual Mouse & Smart Presence Detection started successfully.")
-        print("[INFO] Controls:")
-        print("       - Move Index Finger: Move cursor")
-        print("       - Pinch Index + Thumb: Left click")
-        print("       - Pinch Middle + Thumb: Right click")
+        print("=" * 70)
+        print("VIRTUAL MOUSE WITH SMART USER PRESENCE DETECTION")
+        print("=" * 70)
+        print("[INFO] Application started successfully.")
+        print("[INFO] Gesture Controls:")
+        print("       - Move Index Finger: Move mouse cursor smoothly")
+        print("       - Pinch Index + Thumb (< 38px): Left Click")
+        print("       - Pinch Middle + Thumb (< 38px): Right Click")
         print("       - Index + Middle Together: Scroll Up / Down")
-        print("       - Spread Thumb + Pinky: Adjust Brightness")
-        print("       - Hold Closed Fist (1.8s): Lock Screen")
-        print("       - Press 'q' on video window: Quit")
-        print("       - Press 't': Simulate 12s Away (for quick popup test)")
+        print("       - Spread Thumb + Pinky: Adjust Screen Brightness (10-100%)")
+        print("       - Hold Closed Fist (1.8s): Windows Biometric Lock Screen")
+        print("[INFO] Presence Detection Notifications:")
+        print("       - 10s:  'Hey, are you still there? We can't see you!'")
+        print("       - 30s:  'Where did you go? Take your time!'")
+        print("       - 1m:   'Still away? Your virtual mouse is waiting for you!'")
+        print("       - 3m:   'You've been away for a while. Would you like to lock your screen?'")
+        print("       - Return: 'Welcome back! Your virtual mouse is ready!'")
+        print("[INFO] Shortcuts: 'q' to quit, 'l' to lock screen, 't' to simulate 10s absence trigger")
+        print("=" * 70)
 
         prev_time = time.time()
 
@@ -339,11 +380,11 @@ class VirtualMouseApp:
             while self.is_running and self.cap.isOpened():
                 ret, frame = self.cap.read()
 
-                # Feature 5: Camera Disconnect Notification
+                # Feature 5: Camera Disconnect Notification with Cooldown
                 if not ret or frame is None:
                     print("[WARNING] Webcam feed disconnected or failed to read frame.")
-                    self.popup_manager.show_camera_error("Webcam feed was disconnected or lost!")
-                    time.sleep(1.0)
+                    self.popup_manager.show_camera_error("Webcam feed was disconnected or lost!", cooldown_sec=10.0)
+                    time.sleep(0.5)
                     continue
 
                 # Mirror frame horizontally for natural intuitive interaction
@@ -356,27 +397,24 @@ class VirtualMouseApp:
                 # --------------------------------------------------------------
                 # 1. Smart User Presence Detection
                 # --------------------------------------------------------------
-                # Runs face detection (every frame or every 2 frames for performance)
-                if self.frame_count % 2 == 0 or self.last_face_bbox is None:
-                    self.is_user_present, self.last_face_bbox, event = self.presence_detector.update(frame, curr_time)
+                # Non-blocking presence update with anti-flicker and multi-stage timers
+                self.is_user_present, self.last_face_bbox, event = self.presence_detector.update(frame, curr_time)
 
-                    # Handle presence events
-                    if event:
-                        if event["type"] == "away":
-                            # Feature 2 & 4: Multi-stage absence popups
-                            print(f"[PRESENCE] User away for {event['seconds']}s -> Triggering Popup: {event['message']}")
-                            self.popup_manager.show_absence_popup(
-                                stage=event["stage"],
-                                message=event["message"],
-                                show_lock_option=event["show_lock_option"]
-                            )
-                        elif event["type"] == "welcome":
-                            # Feature 3: Welcome back notification & auto-dismiss
-                            print(f"[PRESENCE] User returned -> {event['message']}")
-                            self.popup_manager.show_welcome_back(
-                                message=event["message"],
-                                duration=event["duration"]
-                            )
+                # Handle presence popup events
+                if event:
+                    if event["type"] == "away":
+                        print(f"[PRESENCE] User away for {event['seconds']}s -> Triggering Popup: '{event['message']}'")
+                        self.popup_manager.show_absence_popup(
+                            stage=event["stage"],
+                            message=event["message"],
+                            show_lock_option=event["show_lock_option"]
+                        )
+                    elif event["type"] == "welcome":
+                        print(f"[PRESENCE] User returned -> '{event['message']}'")
+                        self.popup_manager.show_welcome_back(
+                            message=event["message"],
+                            duration=event["duration"]
+                        )
 
                 # --------------------------------------------------------------
                 # 2. Hand Gesture Recognition & Virtual Mouse Control
@@ -384,11 +422,11 @@ class VirtualMouseApp:
                 gesture_status = "USER AWAY"
                 hand_found = False
 
-                # Only track gestures if user is present in front of the camera
+                # Gestures are actively processed when user is present
                 if self.is_user_present:
                     gesture_status, hand_found = self.hand_tracker.process_frame(frame, self.system_ctrl)
                 else:
-                    # User is away: gesture recognition pauses gracefully
+                    # User is confirmed away: gesture recognition pauses gracefully
                     away_sec = int(self.presence_detector.away_duration)
                     gesture_status = f"AWAY ({away_sec}s)"
 
@@ -410,7 +448,7 @@ class VirtualMouseApp:
                     self.system_ctrl.lock_screen()
                 elif key == ord('t'):
                     # Test mode: simulate away duration
-                    print("[TEST] Simulating 10s absence trigger...")
+                    print("[TEST] Simulating 11s absence trigger...")
                     self.presence_detector.last_face_seen_time = time.time() - 11.0
 
         except KeyboardInterrupt:
@@ -434,7 +472,7 @@ class VirtualMouseApp:
         cv2.rectangle(overlay, (0, 0), (w, 54), (24, 24, 37), -1)
         cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
 
-        # Presence Indicator
+        # Presence Indicator Dot & Text
         if self.is_user_present:
             p_color = (0, 230, 118)  # Bright green
             p_text = "PRESENCE: ACTIVE"
@@ -457,6 +495,7 @@ class VirtualMouseApp:
         if self.cap and self.cap.isOpened():
             self.cap.release()
         cv2.destroyAllWindows()
+        self.presence_detector.stop()
         self.popup_manager.close_all()
         print("[INFO] Clean shutdown complete.")
 
